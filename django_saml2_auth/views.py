@@ -23,7 +23,6 @@ from django.http import HttpResponseRedirect
 from django.utils.http import is_safe_url
 
 from rest_auth.utils import jwt_encode
-from . import xmlsec
 
 
 # default User or custom User. Now both will work.
@@ -222,7 +221,6 @@ def acs(r):
 
 
 def signin(r):
-    xmlsec.install()
     try:
         import urlparse as _urlparse
         from urllib import unquote
