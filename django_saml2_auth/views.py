@@ -173,7 +173,7 @@ def acs(r):
 
     user_email = user_identity[settings.SAML2_AUTH.get('ATTRIBUTES_MAP', {}).get('email', 'Email')][0]
     user_name = user_identity[settings.SAML2_AUTH.get('ATTRIBUTES_MAP', {}).get('username', 'UserName')][0]
-    print(user_name)
+    print("111111111111111", user_name)
     user_first_name = user_identity[settings.SAML2_AUTH.get('ATTRIBUTES_MAP', {}).get('first_name', 'FirstName')][0]
     user_last_name = user_identity[settings.SAML2_AUTH.get('ATTRIBUTES_MAP', {}).get('last_name', 'LastName')][0]
 
@@ -181,8 +181,8 @@ def acs(r):
     is_new_user = False
 
     try:
-        if username:
-            print(type(username))
+        if user_name:
+            print("22222222222222222222", type(user_name))
             target_user = User.objects.get(username=user_name)
         else:
             target_user = User.objects.get(username='6004456')
