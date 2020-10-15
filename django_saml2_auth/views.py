@@ -155,74 +155,78 @@ def _create_new_user(username, email, firstname, lastname):
 
 @csrf_exempt
 def acs(r):
-    saml_client = _get_saml_client(get_current_domain(r))
-    resp = r.POST.get('SAMLResponse', None)
-    next_url = r.session.get('login_next_url', _default_next_url())
-
-    if not resp:
-        return HttpResponseRedirect(get_reverse([denied, 'denied', 'django_saml2_auth:denied']))
-
-    authn_response = saml_client.parse_authn_request_response(
-        resp, entity.BINDING_HTTP_POST)
-    if authn_response is None:
-        return HttpResponseRedirect(get_reverse([denied, 'denied', 'django_saml2_auth:denied']))
-
-    user_identity = authn_response.get_identity()
-    if user_identity is None:
-        return HttpResponseRedirect(get_reverse([denied, 'denied', 'django_saml2_auth:denied']))
-    
     try:
-        user_email = user_identity[settings.SAML2_AUTH.get('ATTRIBUTES_MAP', {}).get('email', 'Email')][0]
-        user_name = user_identity[settings.SAML2_AUTH.get('ATTRIBUTES_MAP', {}).get('username', 'UserName')][0]
-        user_first_name = user_identity[settings.SAML2_AUTH.get('ATTRIBUTES_MAP', {}).get('first_name', 'FirstName')][0]
-        user_last_name = user_identity[settings.SAML2_AUTH.get('ATTRIBUTES_MAP', {}).get('last_name', 'LastName')][0]
-        if 'contractor' in user_email:
+        saml_client = _get_saml_client(get_current_domain(r))
+        resp = r.POST.get('SAMLResponse', None)
+        next_url = r.session.get('login_next_url', _default_next_url())
+
+        if not resp:
             return HttpResponseRedirect(get_reverse([denied, 'denied', 'django_saml2_auth:denied']))
-    except Exception as e:
-        return HttpResponseRedirect(get_reverse([denied, 'denied', 'django_saml2_auth:denied']))
 
-    target_user = None
-    is_new_user = False
+        authn_response = saml_client.parse_authn_request_response(
+            resp, entity.BINDING_HTTP_POST)
+        if authn_response is None:
+            return HttpResponseRedirect(get_reverse([denied, 'denied', 'django_saml2_auth:denied']))
 
-    try:
-        target_user = User.objects.get(username=user_name)
-        if settings.SAML2_AUTH.get('TRIGGER', {}).get('BEFORE_LOGIN', None):
-            import_string(settings.SAML2_AUTH['TRIGGER']['BEFORE_LOGIN'])(user_identity)
-    except User.DoesNotExist:
-        new_user_should_be_created = settings.SAML2_AUTH.get('CREATE_USER', True)
-        if new_user_should_be_created: 
-            target_user = _create_new_user(user_name, user_email, user_first_name, user_last_name)
-            if settings.SAML2_AUTH.get('TRIGGER', {}).get('CREATE_USER', None):
-                import_string(settings.SAML2_AUTH['TRIGGER']['CREATE_USER'])(user_identity)
-            is_new_user = True
+        user_identity = authn_response.get_identity()
+        if user_identity is None:
+            return HttpResponseRedirect(get_reverse([denied, 'denied', 'django_saml2_auth:denied']))
+
+        try:
+            user_email = user_identity[settings.SAML2_AUTH.get('ATTRIBUTES_MAP', {}).get('email', 'Email')][0]
+            user_name = user_identity[settings.SAML2_AUTH.get('ATTRIBUTES_MAP', {}).get('username', 'UserName')][0]
+            user_first_name = user_identity[settings.SAML2_AUTH.get('ATTRIBUTES_MAP', {}).get('first_name', 'FirstName')][0]
+            user_last_name = user_identity[settings.SAML2_AUTH.get('ATTRIBUTES_MAP', {}).get('last_name', 'LastName')][0]
+            if 'contractor' in user_email:
+                return HttpResponseRedirect(get_reverse([denied, 'denied', 'django_saml2_auth:denied']))
+        except Exception as e:
+            return HttpResponseRedirect(get_reverse([denied, 'denied', 'django_saml2_auth:denied']))
+
+        target_user = None
+        is_new_user = False
+
+        try:
+            target_user = User.objects.get(username=user_name)
+            if settings.SAML2_AUTH.get('TRIGGER', {}).get('BEFORE_LOGIN', None):
+                import_string(settings.SAML2_AUTH['TRIGGER']['BEFORE_LOGIN'])(user_identity)
+        except User.DoesNotExist:
+            new_user_should_be_created = settings.SAML2_AUTH.get('CREATE_USER', True)
+            if new_user_should_be_created: 
+                target_user = _create_new_user(user_name, user_email, user_first_name, user_last_name)
+                if settings.SAML2_AUTH.get('TRIGGER', {}).get('CREATE_USER', None):
+                    import_string(settings.SAML2_AUTH['TRIGGER']['CREATE_USER'])(user_identity)
+                is_new_user = True
+            else:
+                return HttpResponseRedirect(get_reverse([denied, 'denied', 'django_saml2_auth:denied']))
+
+        r.session.flush()
+
+        if target_user.is_active:
+            target_user.backend = 'django.contrib.auth.backends.ModelBackend'
+            login(r, target_user)
         else:
             return HttpResponseRedirect(get_reverse([denied, 'denied', 'django_saml2_auth:denied']))
 
-    r.session.flush()
+        if settings.SAML2_AUTH.get('USE_JWT') is True:
+            # We use JWT auth send token to frontend
+            jwt_token = jwt_encode(target_user)
+            query = '?uid={}&token={}'.format(target_user.id, jwt_token)
 
-    if target_user.is_active:
-        target_user.backend = 'django.contrib.auth.backends.ModelBackend'
-        login(r, target_user)
-    else:
-        return HttpResponseRedirect(get_reverse([denied, 'denied', 'django_saml2_auth:denied']))
+            frontend_url = settings.SAML2_AUTH.get(
+                'FRONTEND_URL', next_url)
 
-    if settings.SAML2_AUTH.get('USE_JWT') is True:
-        # We use JWT auth send token to frontend
-        jwt_token = jwt_encode(target_user)
-        query = '?uid={}&token={}'.format(target_user.id, jwt_token)
+            return HttpResponseRedirect(frontend_url+query)
 
-        frontend_url = settings.SAML2_AUTH.get(
-            'FRONTEND_URL', next_url)
-
-        return HttpResponseRedirect(frontend_url+query)
-
-    if is_new_user:
-        try:
-            return render(r, 'django_saml2_auth/welcome.html', {'user': r.user})
-        except TemplateDoesNotExist:
+        if is_new_user:
+            try:
+                return render(r, 'django_saml2_auth/welcome.html', {'user': r.user})
+            except TemplateDoesNotExist:
+                return HttpResponseRedirect(next_url)
+        else:
             return HttpResponseRedirect(next_url)
-    else:
-        return HttpResponseRedirect(next_url)
+    except Exception as e:
+        return HttpResponseRedirect(get_reverse([denied, 'denied', 'django_saml2_auth:denied']))
+        
 
 
 def signin(r):
